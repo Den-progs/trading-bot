@@ -30,3 +30,26 @@ print(f"{ticker} latest quote:")
 print(f"  Bid price: ${quote[ticker].bid_price}")
 print(f"  Ask price: ${quote[ticker].ask_price}")
 print(f"  Timestamp: {quote[ticker].timestamp}")
+
+# 3. Place a paper trade — buy 1 share of AAPL at market price
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+
+print("-" * 40)
+print("Placing order: BUY 1 share of AAPL at market price...")
+
+order_request = MarketOrderRequest(
+    symbol="AAPL",
+    qty=1,
+    side=OrderSide.BUY,
+    time_in_force=TimeInForce.DAY
+)
+
+order = trading_client.submit_order(order_data=order_request)
+
+print(f"Order submitted!")
+print(f"  Order ID: {order.id}")
+print(f"  Status: {order.status}")
+print(f"  Symbol: {order.symbol}")
+print(f"  Quantity: {order.qty}")
+print(f"  Side: {order.side}")
