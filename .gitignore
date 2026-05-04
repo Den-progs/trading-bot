@@ -21,3 +21,6 @@ Thumbs.db
 *.log
 data/
 logs/
+
+bot_log_*.txt
+trade_journal.json
