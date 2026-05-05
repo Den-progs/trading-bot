@@ -27,3 +27,8 @@ trade_journal.json
 backtest_*.csv
 CONTEXT.md
 
+# Test scripts
+test.py
+test_discord.py
+test_ollama.py
+
