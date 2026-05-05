@@ -4,7 +4,12 @@ import time
 import json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+
+# Load environment variables BEFORE importing anything that uses them
+load_dotenv()
+
 import ollama
+import notify
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -13,12 +18,18 @@ from alpaca.data.requests import CryptoLatestQuoteRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
 # ===== CONFIG =====
-TICKER = "DOGE/USD"
-CHECK_INTERVAL = 15
-QUANTITY = 200
+# Each entry: ticker, quantity per trade
+PORTFOLIO = [
+    {"ticker": "DOGE/USD", "qty": 200},   # ~$60/trade
+    {"ticker": "AVAX/USD", "qty": 2},     # ~$20/trade
+    {"ticker": "ETH/USD",  "qty": 0.02},  # ~$70/trade
+    {"ticker": "SHIB/USD", "qty": 5000000},  # ~$70/trade (SHIB is tiny)
+]
+
+CHECK_INTERVAL = 30          # seconds between full portfolio loops
 LOOKBACK_BARS = 20
 OLLAMA_MODEL = "llama3.2:3b"
-MAX_TRADES_PER_RUN = 50
+MAX_TRADES_PER_RUN = 100     # higher cap since we have multiple coins
 JOURNAL_FILE = "trade_journal.json"
 CONFIDENCE_THRESHOLD = 0.3
 # ==================
@@ -57,7 +68,6 @@ def log(msg):
 
 # ===== TRADE JOURNAL =====
 def load_journal():
-    """Load existing journal or return empty list."""
     if not os.path.exists(JOURNAL_FILE):
         return []
     try:
@@ -73,7 +83,6 @@ def save_journal(journal):
 
 
 def record_trade(action, ticker, price, qty, confidence, reason):
-    """Add a trade entry to the journal."""
     journal = load_journal()
     entry = {
         "timestamp": datetime.now().isoformat(),
@@ -83,20 +92,21 @@ def record_trade(action, ticker, price, qty, confidence, reason):
         "qty": qty,
         "ai_confidence": confidence,
         "ai_reason": reason,
-        "pnl": None,        # filled in when position closes
-        "linked_buy_index": None  # index of the BUY this SELL closes
+        "pnl": None,
+        "linked_buy_index": None
     }
 
-    # If this is a SELL, link it to the most recent open BUY and calculate P&L
     if action == "SELL":
+        # Find the most recent open BUY for THIS ticker specifically
         for i in range(len(journal) - 1, -1, -1):
-            if journal[i]["action"] == "BUY" and journal[i]["pnl"] is None and journal[i]["ticker"] == ticker:
+            if (journal[i]["action"] == "BUY"
+                    and journal[i]["pnl"] is None
+                    and journal[i]["ticker"] == ticker):
                 buy_price = journal[i]["price"]
                 buy_qty = journal[i]["qty"]
                 pnl = (price - buy_price) * buy_qty
                 entry["pnl"] = round(pnl, 4)
                 entry["linked_buy_index"] = i
-                # Mark the BUY as closed too (with the same pnl, for easier stats)
                 journal[i]["pnl"] = round(pnl, 4)
                 break
 
@@ -105,26 +115,30 @@ def record_trade(action, ticker, price, qty, confidence, reason):
     return entry
 
 
-def get_journal_stats():
-    """Return a summary of bot performance from the journal."""
+def get_journal_stats(ticker=None):
+    """Stats for one ticker (if specified) or for everything."""
     journal = load_journal()
-    closed_trades = [t for t in journal if t["action"] == "SELL" and t["pnl"] is not None]
+    closed = [t for t in journal
+              if t["action"] == "SELL" and t["pnl"] is not None
+              and (ticker is None or t["ticker"] == ticker)]
 
-    if not closed_trades:
-        return "No completed trades yet."
+    if not closed:
+        return "no closed trades"
 
-    total_pnl = sum(t["pnl"] for t in closed_trades)
-    wins = [t for t in closed_trades if t["pnl"] > 0]
-    losses = [t for t in closed_trades if t["pnl"] < 0]
-    win_rate = len(wins) / len(closed_trades) * 100 if closed_trades else 0
+    total_pnl = sum(t["pnl"] for t in closed)
+    wins = [t for t in closed if t["pnl"] > 0]
+    win_rate = len(wins) / len(closed) * 100
 
-    last5 = closed_trades[-5:]
-    last5_pnl = ", ".join(f"{t['pnl']:+.2f}" for t in last5)
+    return f"{len(closed)} trades, win {win_rate:.0f}%, P&L ${total_pnl:+.2f}"
 
-    return (f"Trades: {len(closed_trades)} | "
-            f"Win rate: {win_rate:.0f}% | "
-            f"Total P&L: ${total_pnl:+.2f} | "
-            f"Last 5: [{last5_pnl}]")
+
+def get_portfolio_summary():
+    """Multi-line summary of stats per coin + total."""
+    lines = ["Portfolio summary:"]
+    for asset in PORTFOLIO:
+        lines.append(f"  {asset['ticker']}: {get_journal_stats(asset['ticker'])}")
+    lines.append(f"  TOTAL: {get_journal_stats()}")
+    return "\n".join(lines)
 
 
 # ===== MARKET DATA =====
@@ -152,7 +166,7 @@ def get_recent_prices(ticker, num_bars=20):
     if ticker not in bars.data or len(bars.data[ticker]) == 0:
         return []
 
-    return [round(float(bar.close), 4) for bar in bars.data[ticker][-num_bars:]]
+    return [round(float(bar.close), 6) for bar in bars.data[ticker][-num_bars:]]
 
 
 def have_position(ticker):
@@ -207,62 +221,86 @@ def buy(ticker, qty, price, confidence, reason):
     )
     trading_client.submit_order(order_data=order)
     record_trade("BUY", ticker, price, qty, confidence, reason)
-    log(f"BUY executed: {qty} {ticker} at ~${price}")
+    log(f"  BUY: {qty} {ticker} at ~${price}")
+    notify.notify_buy(ticker, qty, price, confidence, reason)
 
 
-def sell_all(ticker, price, confidence, reason):
+def sell_all(ticker, qty, price, confidence, reason):
     trading_client.close_position(ticker.replace("/", ""))
-    entry = record_trade("SELL", ticker, price, QUANTITY, confidence, reason)
-    pnl_str = f" (P&L: ${entry['pnl']:+.2f})" if entry["pnl"] is not None else ""
-    log(f"SELL executed: {ticker} at ~${price}{pnl_str}")
+    entry = record_trade("SELL", ticker, price, qty, confidence, reason)
+    pnl = entry["pnl"]
+    pnl_str = f" (P&L: ${pnl:+.2f})" if pnl is not None else ""
+    log(f"  SELL: {ticker} at ~${price}{pnl_str}")
+    notify.notify_sell(ticker, price, pnl, confidence, reason)
+
+
+# ===== PROCESS ONE COIN =====
+def process_coin(asset, trades_done):
+    """Run one full decision cycle for one coin. Returns 1 if a trade was placed, else 0."""
+    ticker = asset["ticker"]
+    qty = asset["qty"]
+
+    try:
+        prices = get_recent_prices(ticker, LOOKBACK_BARS)
+        if not prices:
+            log(f"[{ticker}] No price data — skip")
+            return 0
+
+        current_price = get_current_price(ticker, fallback_prices=prices)
+        owns = have_position(ticker)
+
+        log(f"[{ticker}] price=${current_price}, holding={owns}")
+        decision = ask_ai_for_decision(ticker, prices, current_price, owns)
+
+        action = decision.get("action", "HOLD")
+        confidence = decision.get("confidence", 0.0)
+        reason = decision.get("reason", "(no reason given)")
+        log(f"[{ticker}] AI: {action} ({confidence}) — {reason}")
+
+        if trades_done >= MAX_TRADES_PER_RUN:
+            log(f"[{ticker}] Trade cap reached — holding only")
+            return 0
+
+        if action == "BUY" and not owns and confidence >= CONFIDENCE_THRESHOLD:
+            buy(ticker, qty, current_price, confidence, reason)
+            return 1
+        elif action == "SELL" and owns and confidence >= CONFIDENCE_THRESHOLD:
+            sell_all(ticker, qty, current_price, confidence, reason)
+            return 1
+
+    except Exception as e:
+        log(f"[{ticker}] Error: {e}")
+
+    return 0
 
 
 # ===== MAIN LOOP =====
-log(f"Local AI bot starting for {TICKER} using {OLLAMA_MODEL}")
-log(f"Checking every {CHECK_INTERVAL}s. Max {MAX_TRADES_PER_RUN} trades. Logging to {log_filename}")
-log(f"Journal: {get_journal_stats()}")
+log(f"Multi-coin AI bot starting. Portfolio: {[a['ticker'] for a in PORTFOLIO]}")
+log(f"Model: {OLLAMA_MODEL} | Interval: {CHECK_INTERVAL}s | Max trades: {MAX_TRADES_PER_RUN}")
+log(f"Logging to {log_filename}")
+print(get_portfolio_summary())
+notify.notify_startup(PORTFOLIO, OLLAMA_MODEL, CHECK_INTERVAL, MAX_TRADES_PER_RUN)
 
 trades_today = 0
 
 try:
     while True:
-        try:
-            prices = get_recent_prices(TICKER, LOOKBACK_BARS)
-            if not prices:
-                log("No recent price data — skipping iteration.")
-                time.sleep(CHECK_INTERVAL)
-                continue
+        log("=" * 60)
+        log(f"New cycle. Total trades so far: {trades_today}/{MAX_TRADES_PER_RUN}")
 
-            current_price = get_current_price(TICKER, fallback_prices=prices)
-            owns = have_position(TICKER)
+        for asset in PORTFOLIO:
+            trades_today += process_coin(asset, trades_today)
+            time.sleep(2)  # small breather between coins so we don't hammer APIs
 
-            log(f"Asking AI... price=${current_price}, holding={owns}, trades_done={trades_today}/{MAX_TRADES_PER_RUN}")
-            decision = ask_ai_for_decision(TICKER, prices, current_price, owns)
-
-            action = decision.get("action", "HOLD")
-            confidence = decision.get("confidence", 0.0)
-            reason = decision.get("reason", "(no reason given)")
-            log(f"AI: {action} ({confidence}) — {reason}")
-
-            if trades_today >= MAX_TRADES_PER_RUN:
-                log(f"Trade cap reached. Holding only.")
-            elif action == "BUY" and not owns and confidence >= CONFIDENCE_THRESHOLD:
-                buy(TICKER, QUANTITY, current_price, confidence, reason)
-                trades_today += 1
-                time.sleep(5)
-            elif action == "SELL" and owns and confidence >= CONFIDENCE_THRESHOLD:
-                sell_all(TICKER, current_price, confidence, reason)
-                trades_today += 1
-                time.sleep(5)
-                log(f"  └─ {get_journal_stats()}")  # show stats after each closed trade
-            else:
-                log("No action taken.")
-
-        except Exception as e:
-            log(f"Loop error: {e}")
+        # End-of-cycle summary every 5 cycles
+        if trades_today > 0 and trades_today % 5 == 0:
+            print(get_portfolio_summary())
 
         time.sleep(CHECK_INTERVAL)
 
 except KeyboardInterrupt:
+    log("=" * 60)
     log("Bot stopped by user.")
-    log(f"Final stats: {get_journal_stats()}")
+    summary = get_portfolio_summary()
+    print(summary)
+    notify.notify_shutdown(summary)
