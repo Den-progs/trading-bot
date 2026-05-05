@@ -24,4 +24,5 @@ logs/
 
 bot_log_*.txt
 trade_journal.json
+backtest_*.csv
 

@@ -38,11 +38,15 @@ GitHub repo: https://github.com/Den-progs/trading-bot (private)
 - `main.py` — the main bot loop (multi-coin, AI decisions, journaling, Discord)
 - `notify.py` — Discord webhook helpers (silently fails if Discord is down)
 - `cleanup.py` — flattens all positions and cancels open orders
+- `analyze.py` — reads trade_journal.json; outputs per-coin stats, confidence bands, best/worst trades
+- `backtest.py` — 30-day backtester; downloads 1-min bars, simulates strategy, outputs metrics + equity curve
 - `test_ollama.py`, `test_discord.py` — sanity-check scripts
 - `.env` — credentials (gitignored): ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL, DISCORD_WEBHOOK_URL
 - `.gitignore` — excludes `.env`, `.venv/`, `bot_log_*.txt`, `trade_journal.json`
 - `trade_journal.json` — every trade with AI reasoning + P&L (gitignored)
 - `bot_log_*.txt` — full play-by-play per run (gitignored)
+- `data/` — cached historical bar CSVs for backtester (gitignored)
+- `backtest_*.csv` — per-run trade logs from backtester (gitignored)
 - `README.md` — public-facing project description
 - `ROADMAP.md` — full multi-phase development plan
 - `notes.md` — my running observations
@@ -73,22 +77,18 @@ GitHub repo: https://github.com/Den-progs/trading-bot (private)
 - [x] IEX/free-tier compatible data fetching
 - [x] GitHub repo with README
 
-## What's next (Phase 1 — Understand What I Built)
+## What's done (Phase 1 — Understand What I Built)
 
-Per ROADMAP.md, the next session is:
+- [x] Post-mortem of overnight run (see observations below)
+- [x] Built `analyze.py` — reads trade_journal.json, outputs per-coin breakdown, win rate by confidence band, best/worst trades with hold duration
+- [x] Built `backtest.py` — 30-day backtester with 1-min bars, data caching, threshold sweep, equity curve, Sharpe
 
-1. **Post-mortem of overnight run** (~30 min)
-   - Stop bot, run cleanup, read journal, write 3 observations to notes.md
+## What's next (Phase 2 — Improve the Edge)
 
-2. **Build `analyze.py`** (~30 min)
-   - Standalone script that reads trade_journal.json
-   - Outputs: per-coin breakdown, win rate by confidence band, best/worst trades
-
-3. **Build the backtester** (~2 hours)
-   - Pull 30+ days of historical data
-   - Replay strategies through the existing decision logic
-   - Output: total return, win rate, max drawdown, Sharpe, P&L chart
-   - This is THE most important upgrade — without it I'm flying blind
+1. **Add spread/fee model to backtester** — results are currently optimistic; real bid/ask spread likely eats most of the small wins
+2. **Run longer backtest** — 90+ days to validate edge across more market regimes
+3. **Experiment with thresholds** — sweep already built, now interpret results and tune CONFIDENCE_THRESHOLD in main.py
+4. **Try a better model** — test `qwen2.5:7b` decisions vs `llama3.2:3b` on same data
 
 ---
 
@@ -154,7 +154,7 @@ python main.py
 
 ---
 
-**Last updated:** 2026-05-05, after Phase 0 complete
+**Last updated:** 2026-05-05, after Phase 1 complete
 
 ## Strategy ideas in flight (not yet built)
 
