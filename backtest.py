@@ -34,7 +34,7 @@ PORTFOLIO = [
     {"ticker": "ETH/USD",  "qty": 0.02},
     {"ticker": "SHIB/USD", "qty": 5000000},
 ]
-LOOKBACK_BARS = 20
+LOOKBACK_BARS = 240 # 4 hours of 1-min bars to measure move size for buy/sell decisions
 CONFIDENCE_THRESHOLD = 0.3
 DATA_DIR = "data"
 
@@ -127,7 +127,11 @@ def simulate(ticker, qty, bars, threshold):
             position = {"buy_price": price, "buy_idx": i, "buy_ts": bars[i]["timestamp"]}
 
         elif action == "SELL" and position is not None:
-            pnl = (price - position["buy_price"]) * qty
+            # RUTHLESS REALISM: 0.1% slippage/spread on each side
+            SLIPPAGE = 0.001 
+            real_buy_price = position["buy_price"] * (1 + SLIPPAGE)
+            real_sell_price = price * (1 - SLIPPAGE)
+            pnl = (real_sell_price - real_buy_price) * qty
             trades.append({
                 "ticker": ticker,
                 "buy_price": position["buy_price"],
@@ -239,7 +243,8 @@ def save_csv(trades):
 # ===== SWEEP MODE =====
 
 def run_sweep(coins, bars_by_ticker, days):
-    thresholds = [0.0002, 0.0005, 0.001, 0.002, 0.005]
+    # Testing 0.5%, 1%, 2%, 3%, and 5% moves
+    thresholds = [0.005, 0.01, 0.02, 0.03, 0.05]
     print(f"\n{'THRESHOLD SWEEP':^60}")
     print(f"{'threshold':>12}  {'trades':>7}  {'win%':>6}  {'total P&L':>12}  {'max DD':>10}  {'Sharpe':>8}")
     print("-" * 65)
