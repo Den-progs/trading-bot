@@ -32,3 +32,8 @@ test.py
 test_discord.py
 test_ollama.py
 
+# AI & Tooling
+.claude/
+
+# Stock Data Cache
+data_stocks/
