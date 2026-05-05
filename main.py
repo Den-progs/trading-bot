@@ -56,7 +56,8 @@ class Tee:
         for f in self.files:
             f.flush()
 
-log_filename = f"bot_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+os.makedirs("logs", exist_ok=True)
+log_filename = f"logs/bot_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 log_file = open(log_filename, "w", encoding="utf-8")
 sys.stdout = Tee(sys.stdout, log_file)
 
