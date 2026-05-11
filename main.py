@@ -10,6 +10,7 @@ load_dotenv()
 
 import ollama
 import notify
+from remote import BotState, RemoteControl
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -282,16 +283,26 @@ log(f"Logging to {log_filename}")
 print(get_portfolio_summary())
 notify.notify_startup(PORTFOLIO, OLLAMA_MODEL, CHECK_INTERVAL, MAX_TRADES_PER_RUN)
 
+state = BotState()
+remote = RemoteControl(state, get_portfolio_summary)
+remote.start()
+log(f"Remote control: {'enabled (Discord bot)' if os.getenv('DISCORD_BOT_TOKEN') else 'disabled (set DISCORD_BOT_TOKEN to enable)'}")
+
 trades_today = 0
 
 try:
-    while True:
+    while state.running:
         log("=" * 60)
         log(f"New cycle. Total trades so far: {trades_today}/{MAX_TRADES_PER_RUN}")
 
-        for asset in PORTFOLIO:
-            trades_today += process_coin(asset, trades_today)
-            time.sleep(2)  # small breather between coins so we don't hammer APIs
+        if state.paused:
+            log("Trading PAUSED — skipping orders this cycle.")
+        else:
+            for asset in PORTFOLIO:
+                if not state.running:
+                    break
+                trades_today += process_coin(asset, trades_today)
+                time.sleep(2)  # small breather between coins so we don't hammer APIs
 
         # End-of-cycle summary every 5 cycles
         if trades_today > 0 and trades_today % 5 == 0:
@@ -300,8 +311,12 @@ try:
         time.sleep(CHECK_INTERVAL)
 
 except KeyboardInterrupt:
+    state.stop()
+
+finally:
+    remote.stop()
     log("=" * 60)
-    log("Bot stopped by user.")
+    log("Bot stopped.")
     summary = get_portfolio_summary()
     print(summary)
     notify.notify_shutdown(summary)

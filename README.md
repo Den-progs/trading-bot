@@ -60,6 +60,23 @@ All knobs are at the top of `main.py`:
 | `CONFIDENCE_THRESHOLD` | 0.3 | Minimum AI confidence to act |
 | `MAX_TRADES_PER_RUN` | 100 | Safety cap per session |
 
+## Remote control (Discord)
+
+The bot can be controlled live via Discord commands. Set `DISCORD_BOT_TOKEN` to enable it (the webhook is still used for trade notifications; the bot token is separate).
+
+| Command | Effect |
+|---|---|
+| `!status` | Show whether the bot is running or paused |
+| `!pause` | Suspend order placement (loop keeps running) |
+| `!resume` | Re-enable order placement |
+| `!summary` | Print portfolio P&L from the trade journal |
+| `!stop` | Ask the bot to exit after the current cycle |
+| `!help` | List all commands |
+
+Optionally set `DISCORD_CONTROL_CHANNEL` to the name of the channel you want the bot to accept commands from (e.g. `bot-control`). If unset, the bot responds in any channel it can see.
+
+To create a bot token: Discord Developer Portal → New Application → Bot → Reset Token → enable **Message Content Intent**.
+
 ## Required `.env` keys
 
 ```
@@ -67,6 +84,10 @@ ALPACA_API_KEY=...
 ALPACA_SECRET_KEY=...
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 DISCORD_WEBHOOK_URL=...
+
+# Optional — enables !pause / !resume / !stop / !status / !summary commands
+DISCORD_BOT_TOKEN=...
+DISCORD_CONTROL_CHANNEL=bot-control
 ```
 
 ## Disclaimer
