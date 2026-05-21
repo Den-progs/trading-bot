@@ -20,18 +20,18 @@ from alpaca.data.timeframe import TimeFrame
 # ===== CONFIG =====
 # Each entry: ticker, quantity per trade
 PORTFOLIO = [
-    {"ticker": "DOGE/USD", "qty": 200},   # ~$60/trade
-    {"ticker": "AVAX/USD", "qty": 2},     # ~$20/trade
-    {"ticker": "ETH/USD",  "qty": 0.02},  # ~$70/trade
-    {"ticker": "SHIB/USD", "qty": 5000000},  # ~$70/trade (SHIB is tiny)
+    {"ticker": "DOGE/USD", "qty": 100000},      # ~$10,900/trade
+    {"ticker": "AVAX/USD", "qty": 1000},        # ~$9,970/trade
+    {"ticker": "ETH/USD",  "qty": 5},           # ~$11,660/trade
+    {"ticker": "SHIB/USD", "qty": 1000000000},  # ~$6,400/trade
 ]
 
-CHECK_INTERVAL = 30          # seconds between full portfolio loops
-LOOKBACK_BARS = 20
+CHECK_INTERVAL = 15          # seconds between full portfolio loops
+LOOKBACK_BARS = 10           # shorter = reacts faster to recent moves
 OLLAMA_MODEL = "llama3.2:3b"
-MAX_TRADES_PER_RUN = 100     # higher cap since we have multiple coins
+MAX_TRADES_PER_RUN = 500     # uncapped — go wild
 JOURNAL_FILE = "trade_journal.json"
-CONFIDENCE_THRESHOLD = 0.3
+CONFIDENCE_THRESHOLD = 0.1   # near-zero — act on almost any signal
 # ==================
 
 load_dotenv()
@@ -142,6 +142,28 @@ def get_portfolio_summary():
     return "\n".join(lines)
 
 
+def get_trade_memory(ticker, n=10):
+    """Return last N closed trades for a ticker as a prompt-ready string."""
+    journal = load_journal()
+    closed = [t for t in journal
+              if t["action"] == "SELL" and t["pnl"] is not None
+              and t["ticker"] == ticker]
+    if not closed:
+        return "No previous closed trades on this ticker yet."
+    lines = []
+    for t in closed[-n:]:
+        outcome = "PROFIT" if t["pnl"] > 0 else "LOSS"
+        lines.append(
+            f"- BUY@${t['price']:.5f} → {outcome} ${t['pnl']:+.4f} "
+            f"(conf={t['ai_confidence']:.2f}, reason: {t['ai_reason'][:60]})"
+        )
+    wins = [t for t in closed if t["pnl"] > 0]
+    win_rate = len(wins) / len(closed) * 100
+    total_pnl = sum(t["pnl"] for t in closed)
+    summary = f"Overall: {len(closed)} trades, {win_rate:.0f}% win rate, ${total_pnl:+.4f} total P&L"
+    return summary + "\n" + "\n".join(lines)
+
+
 # ===== MARKET DATA =====
 def get_current_price(ticker, fallback_prices=None):
     request = CryptoLatestQuoteRequest(symbol_or_symbols=ticker)
@@ -181,7 +203,11 @@ def have_position(ticker):
 # ===== AI DECISION =====
 def ask_ai_for_decision(ticker, prices, current_price, owns_position):
     position_status = "YES" if owns_position else "NO"
-    prompt = f"""You are an active crypto day trader analyzing {ticker}.
+    memory = get_trade_memory(ticker)
+    prompt = f"""You are an ULTRA-AGGRESSIVE crypto scalper. You trade {ticker} constantly for tiny profits.
+
+YOUR PAST TRADE HISTORY FOR {ticker} (learn from this):
+{memory}
 
 Recent minute-bar closing prices (oldest to newest):
 {prices}
@@ -192,12 +218,12 @@ Currently holding position: {position_status}
 Respond with ONLY a JSON object in this exact format, no markdown, no extra text:
 {{"action":"BUY|SELL|HOLD","confidence":0.0,"reason":"short explanation"}}
 
-Rules:
-- If not holding: only BUY or HOLD allowed
-- If holding: only SELL or HOLD allowed
-- Day traders look for SMALL moves. A 0.05% drop is potentially a buying opportunity. A 0.05% rise from your buy could be worth taking.
-- Be willing to act on weak signals — confidence around 0.5-0.7 is normal for active trading
-- Only HOLD when the price is literally flat (no change at all) for many bars"""
+AGGRESSIVE SCALPING RULES:
+- If NOT holding: BUY on any dip or flat price. Even 0.01% drop = BUY. Never miss an entry.
+- If holding: SELL ONLY if price is ABOVE your entry (any upward tick = take profit). If price is BELOW entry, HOLD and wait for recovery — never sell a loss.
+- Confidence should ALWAYS be 0.7 or higher — you are decisive.
+- HOLD is only valid when holding a losing position waiting to recover.
+- The goal: buy every dip, sell every rip. Never lock in a loss."""
 
     for attempt in range(3):
         try:

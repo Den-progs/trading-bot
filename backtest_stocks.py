@@ -115,9 +115,9 @@ def simulate(ticker, qty, bars, threshold):
     return trades, equity
 
 # 1. First, define the function so Python knows it exists
-def run_sweep(ticker):
-    print(f"\n--- THRESHOLD SWEEP: {ticker} ---")
-    bars = fetch_stock_bars(ticker, 30)
+def run_sweep(ticker, days=30):
+    print(f"\n--- THRESHOLD SWEEP: {ticker} ({days}d) ---")
+    bars = fetch_stock_bars(ticker, days)
     if not bars: 
         print("No data found.")
         return
@@ -147,15 +147,29 @@ def main():
     args = parser.parse_args()
 
     if args.sweep:
-        run_sweep(args.coin) # Now Python knows what this is!
+        run_sweep(args.coin, args.days) # Now Python knows what this is!
     else:
         print(f"\nSTOCK BACKTEST | {args.days} Days | Threshold: {args.threshold*100}%")
         print("-" * 50)
         bars = fetch_stock_bars(args.coin, args.days)
         if bars:
-            trades, equity = simulate(args.coin, 1, bars, args.threshold)
+            qty = QUANTITIES.get(args.coin, 1)
+            trades, equity = simulate(args.coin, qty, bars, args.threshold)
             pnl = sum(t["pnl"] for t in trades)
+            wins = [t for t in trades if t["pnl"] > 0]
+            losses = [t for t in trades if t["pnl"] <= 0]
+            win_rate = len(wins) / len(trades) * 100 if trades else 0
+            avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
+            avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
             print(f"{args.coin}: {len(trades)} trades | Total P&L: ${pnl:+.2f}")
+            print(f"  Win Rate: {win_rate:.1f}% ({len(wins)}W / {len(losses)}L)")
+            print(f"  Avg Win: ${avg_win:+.2f} | Avg Loss: ${avg_loss:+.2f}")
+            if equity:
+                peak = max(equity)
+                trough = min(equity[equity.index(peak):]) if equity.index(peak) < len(equity)-1 else equity[-1]
+                max_dd = trough - peak
+                print(f"  Max Drawdown: ${max_dd:.2f}")
+                print(f"  Final Equity: ${equity[-1]:+.2f}")
 
 # 3. Last, trigger the main function
 if __name__ == "__main__":
